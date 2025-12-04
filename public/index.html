@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard IoT - Temperatura</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f5f5f5;
+    }
+    header {
+      background: #1e3a8a;
+      color: white;
+      padding: 15px 20px;
+      text-align: center;
+    }
+    main {
+      max-width: 1000px;
+      margin: 20px auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    .controls label {
+      font-weight: bold;
+    }
+    .controls input, .controls select, .controls button {
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    .controls button {
+      background: #1e3a8a;
+      color: white;
+      cursor: pointer;
+      border: none;
+    }
+    .controls button:hover {
+      background: #2563eb;
+    }
+    #grafico {
+      max-width: 100%;
+      height: 400px;
+    }
+    #info {
+      margin-top: 10px;
+    }
+    footer {
+      text-align: center;
+      font-size: 12px;
+      color: #666;
+      margin: 15px 0 10px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Dashboard IoT - Temperatura</h1>
+    <p>Monitor de lecturas desde ESP32 (Render + MongoDB)</p>
+  </header>
+
+  <main>
+    <div class="controls">
+      <div>
+        <label for="fecha">Fecha:</label>
+        <input type="date" id="fecha" />
+      </div>
+
+      <div>
+        <label for="deviceId">Dispositivo:</label>
+        <!-- Puedes filtrar por deviceId o dejar "Todos" -->
+        <select id="deviceId">
+          <option value="">Todos</option>
+          <option value="esp32_local_1">esp32_local_1</option>
+          <!-- agrega más devices aquí si tienes varios -->
+        </select>
+      </div>
+
+      <div>
+        <button id="btnCargar">Cargar datos</button>
+      </div>
+    </div>
+
+    <canvas id="grafico"></canvas>
+    <p id="info"></p>
+  </main>
+
+  <footer>
+    Dashboard IoT &mdash; desarrollado por S.T.C. / Ing. Jeanmarco Morales
+  </footer>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // Cambia esto por la URL de tu backend en Render
+    const API_BASE_URL = "https://iot-temp-monitor.onrender.com";
+
+    let chart;
+
+    function formatearHora(fechaISO) {
+      const d = new Date(fechaISO);
+      const horas = String(d.getHours()).padStart(2, "0");
+      const minutos = String(d.getMinutes()).padStart(2, "0");
+      return `${horas}:${minutos}`;
+    }
+
+    async function cargarDatos() {
+      const fecha = document.getElementById("fecha").value;
+      const deviceId = document.getElementById("deviceId").value;
+
+      let url = API_BASE_URL + "/api/temperature/day";
+
+      const params = [];
+      if (fecha) {
+        params.push("date=" + fecha); // backend espera ?date=YYYY-MM-DD
+      }
+      // En este ejemplo filtramos por deviceId en el frontend,
+      // pero puedes crear un endpoint filtro en backend si quieres.
+      if (params.length > 0) {
+        url += "?" + params.join("&");
+      }
+
+      try {
+        const res = await fetch(url);
+        const datos = await res.json();
+
+        // Si se selecciona un deviceId, filtramos en el cliente
+        const lecturas = deviceId
+          ? datos.filter(d => d.deviceId === deviceId)
+          : datos;
+
+        const labels = lecturas.map(d => formatearHora(d.createdAt));
+        const values = lecturas.map(d => d.temperature);
+
+        const ctx = document.getElementById("grafico").getContext("2d");
+
+        if (chart) {
+          chart.destroy();
+        }
+
+        chart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Temperatura (°C)",
+                data: values,
+                borderWidth: 2,
+                fill: false,
+                tension: 0.2
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            interaction: {
+              mode: "index",
+              intersect: false
+            },
+            plugins: {
+              legend: {
+                display: true
+              },
+              tooltip: {
+                enabled: true
+              }
+            },
+            scales: {
+              x: {
+                title: {
+                  display: true,
+                  text: "Hora"
+                }
+              },
+              y: {
+                title: {
+                  display: true,
+                  text: "Temperatura (°C)"
+                }
+              }
+            }
+          }
+        });
+
+        const info = document.getElementById("info");
+        if (values.length > 0) {
+          const min = Math.min(...values);
+          const max = Math.max(...values);
+          const prom = values.reduce((a, b) => a + b, 0) / values.length;
+
+          info.textContent =
+            `Lecturas: ${values.length} | ` +
+            `Mín: ${min.toFixed(2)} °C | ` +
+            `Máx: ${max.toFixed(2)} °C | ` +
+            `Promedio: ${prom.toFixed(2)} °C`;
+        } else {
+          info.textContent = "No hay datos para esta fecha / dispositivo.";
+        }
+      } catch (err) {
+        console.error(err);
+        document.getElementById("info").textContent =
+          "Error al cargar datos. Revisa la URL del backend o CORS.";
+      }
+    }
+
+    window.onload = () => {
+      const hoy = new Date().toISOString().slice(0, 10);
+      document.getElementById("fecha").value = hoy;
+      document.getElementById("btnCargar"

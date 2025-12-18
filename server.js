@@ -1,125 +1,117 @@
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const path = require('path');
+// ============================
+// IMPORTS
+// ============================
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+require("dotenv").config();
 
+// ============================
+// APP
+// ============================
 const app = express();
+
+// ============================
+// MIDDLEWARES
+// ============================
 app.use(cors({
-  origin: '*',   // permite GitHub Pages, Render, etc.
-  methods: ['GET', 'POST'],
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
 }));
 
-
-// ======= MIDDLEWARE =======
+app.options("*", cors());
 app.use(express.json());
-app.use(cors()); // Permitir peticiones desde GitHub Pages u otros dominios
 
-// ======= VARIABLES DE ENTORNO =======
-const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY;
+// ============================
+// MONGODB
+// ============================
+const mongoUri = process.env.MONGO_URI;
 
-// ======= MONGODB CONEXIÓN =======
-const mongoUri = process.env.MONGO_URI||"mongodb+srv://Jean:J3anmarc0@cluster0.whidtbg.mongodb.net/?appName=Cluster0";
+mongoose.connect(mongoUri)
+  .then(() => console.log("✔️ Conectado a MongoDB Atlas"))
+  .catch(err => console.error("❌ Error MongoDB:", err));
 
+// ============================
+// MODELO
+// ============================
+const TemperatureSchema = new mongoose.Schema(
+  {
+    deviceId: {
+      type: String,
+      required: true
+    },
+    temperature: {
+      type: Number,
+      required: true
+    }
+  },
+  {
+    timestamps: true
+  }
+);
 
-mongoose.connect(mongoUri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log("✔️ Conectado a MongoDB Atlas"))
-.catch(err => {
-  console.error("❌ Error conectando a MongoDB:", err);
+const Temperature = mongoose.model("Temperature", TemperatureSchema);
+
+// ============================
+// RUTAS API
+// ============================
+
+// Prueba rápida
+app.get("/api/test", (req, res) => {
+  res.json({ status: "API OK" });
 });
 
-// ======= SCHEMA =======
-const temperatureSchema = new mongoose.Schema({
-  deviceId: String,
-  temperature: Number,
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Temperature = mongoose.model("Temperature", temperatureSchema);
-
-// =======================================================
-//  ENDPOINT PARA RECIBIR TEMPERATURA DESDE EL ESP32
-// =======================================================
+// Guardar temperatura (ESP32)
 app.post("/api/temperature", async (req, res) => {
   try {
-    const { deviceId, temperature, apiKey } = req.body;
+    const { deviceId, temperature } = req.body;
 
-    // Validar API KEY
-    if (apiKey !== API_KEY) {
-      return res.status(401).json({ error: "API KEY inválida" });
+    if (!deviceId || temperature === undefined) {
+      return res.status(400).json({ error: "Datos incompletos" });
     }
 
-    // Validación de temperatura
-    if (typeof temperature !== "number") {
-      return res.status(400).json({ error: "Temperatura inválida" });
-    }
-
-    const newData = new Temperature({
-      deviceId: deviceId || "unknown",
+    const lectura = new Temperature({
+      deviceId,
       temperature
     });
 
-    await newData.save();
+    await lectura.save();
 
-    return res.json({
-      message: "OK",
-      savedId: newData._id
-    });
-
+    res.json({ message: "Lectura guardada" });
   } catch (err) {
-    console.error("Error guardando temperatura:", err);
-    return res.status(500).json({ error: "Error en el servidor" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// =======================================================
-//  ENDPOINT PARA CONSULTAR LOS DATOS DE UN DÍA
-//  Ejemplo: /api/temperature/day?date=2025-02-10
-//  Si no se envía fecha → usa la fecha actual
-// =======================================================
+// Obtener temperaturas por día
 app.get("/api/temperature/day", async (req, res) => {
   try {
-    let dateQuery = req.query.date;
-    let start, end;
+    const { date } = req.query;
 
-    if (dateQuery) {
-      start = new Date(dateQuery + "T00:00:00");
-      end   = new Date(dateQuery + "T23:59:59");
-    } else {
-      const now = new Date();
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    let filtro = {};
+
+    if (date) {
+      const start = new Date(date + "T00:00:00.000Z");
+      const end = new Date(date + "T23:59:59.999Z");
+      filtro.createdAt = { $gte: start, $lte: end };
     }
 
-    const data = await Temperature.find({
-      createdAt: { $gte: start, $lte: end }
-    }).sort({ createdAt: 1 });
+    const datos = await Temperature
+      .find(filtro)
+      .sort({ createdAt: 1 });
 
-    return res.json(data);
-
+    res.json(datos);
   } catch (err) {
-    console.error("Error consultando datos:", err);
-    return res.status(500).json({ error: "Error en el servidor" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// =======================================================
-//  SERVIR ARCHIVOS ESTÁTICOS (Carpeta public/)
-// =======================================================
-app.use(express.static(path.join(__dirname, "public")));
+// ============================
+// SERVER
+// ============================
+const PORT = process.env.PORT || 3000;
 
-// Ruta fallback para cualquier archivo no encontrado
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-// =======================================================
-//  INICIAR SERVIDOR
-// =======================================================
 app.listen(PORT, () => {
   console.log(`🚀 Servidor IoT escuchando en puerto ${PORT}`);
 });

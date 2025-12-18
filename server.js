@@ -5,6 +5,11 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
+app.use(cors({
+  origin: '*',   // permite GitHub Pages, Render, etc.
+  methods: ['GET', 'POST'],
+}));
+
 
 // ======= MIDDLEWARE =======
 app.use(express.json());
